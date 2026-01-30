@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
-from expense_tracker.models import Category, Transaction
+from expense_tracker.models import Category, INTERNAL_TRANSFER_PATTERN, Transaction
 
 
 class Storage:
@@ -131,6 +131,7 @@ class Storage:
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         limit: Optional[int] = None,
+        include_internal_transfers: bool = True,
     ) -> list[Transaction]:
         """Get transactions with optional filters.
 
@@ -139,6 +140,7 @@ class Storage:
             date_from: Filter by start date
             date_to: Filter by end date
             limit: Maximum number of results
+            include_internal_transfers: Include internal transfers (default True)
 
         Returns:
             List of matching transactions
@@ -169,44 +171,45 @@ class Storage:
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
 
-        return [self._row_to_transaction(row) for row in rows]
+        transactions = [self._row_to_transaction(row) for row in rows]
+
+        if not include_internal_transfers:
+            transactions = [t for t in transactions if not t.is_internal_transfer()]
+
+        return transactions
 
     def get_summary(
         self,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
+        include_internal_transfers: bool = False,
     ) -> dict[str, Decimal]:
         """Get expense summary by category.
 
         Args:
             date_from: Filter by start date
             date_to: Filter by end date
+            include_internal_transfers: Include internal transfers (default False)
 
         Returns:
             Dictionary mapping category names to total amounts
         """
-        query = """
-            SELECT category, SUM(CAST(amount AS REAL)) as total
-            FROM transactions
-            WHERE CAST(amount AS REAL) < 0
-        """
-        params: list = []
+        # Fetch all expense transactions and filter in Python for internal transfers
+        transactions = self.get_transactions(
+            date_from=date_from,
+            date_to=date_to,
+            include_internal_transfers=include_internal_transfers,
+        )
 
-        if date_from:
-            query += " AND date >= ?"
-            params.append(date_from.isoformat())
+        summary: dict[str, Decimal] = {}
+        for t in transactions:
+            if t.is_expense():
+                cat_name = t.category.value if t.category else "Прочее"
+                if cat_name not in summary:
+                    summary[cat_name] = Decimal("0")
+                summary[cat_name] += abs(t.amount)
 
-        if date_to:
-            query += " AND date <= ?"
-            params.append(date_to.isoformat())
-
-        query += " GROUP BY category ORDER BY total ASC"
-
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(query, params)
-            rows = cursor.fetchall()
-
-        return {row[0] or "Прочее": Decimal(str(abs(row[1]))) for row in rows}
+        return summary
 
     def get_top_expenses(
         self,
@@ -214,6 +217,7 @@ class Storage:
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         limit: int = 10,
+        include_internal_transfers: bool = False,
     ) -> list[Transaction]:
         """Get top expenses by amount.
 
@@ -222,10 +226,14 @@ class Storage:
             date_from: Filter by start date
             date_to: Filter by end date
             limit: Maximum number of results
+            include_internal_transfers: Include internal transfers (default False)
 
         Returns:
             List of top expense transactions
         """
+        # Fetch more than needed to account for filtered internal transfers
+        fetch_limit = limit * 3 if not include_internal_transfers else limit
+
         query = """
             SELECT * FROM transactions
             WHERE CAST(amount AS REAL) < 0
@@ -245,53 +253,50 @@ class Storage:
             params.append(date_to.isoformat())
 
         query += " ORDER BY CAST(amount AS REAL) ASC LIMIT ?"
-        params.append(limit)
+        params.append(fetch_limit)
 
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
 
-        return [self._row_to_transaction(row) for row in rows]
+        transactions = [self._row_to_transaction(row) for row in rows]
+
+        if not include_internal_transfers:
+            transactions = [t for t in transactions if not t.is_internal_transfer()]
+
+        return transactions[:limit]
 
     def get_totals(
         self,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
+        include_internal_transfers: bool = False,
     ) -> tuple[Decimal, Decimal]:
         """Get total income and expenses.
 
         Args:
             date_from: Filter by start date
             date_to: Filter by end date
+            include_internal_transfers: Include internal transfers (default False)
 
         Returns:
             Tuple of (total_income, total_expense)
         """
-        query = "SELECT amount FROM transactions WHERE 1=1"
-        params: list = []
-
-        if date_from:
-            query += " AND date >= ?"
-            params.append(date_from.isoformat())
-
-        if date_to:
-            query += " AND date <= ?"
-            params.append(date_to.isoformat())
-
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(query, params)
-            rows = cursor.fetchall()
+        transactions = self.get_transactions(
+            date_from=date_from,
+            date_to=date_to,
+            include_internal_transfers=include_internal_transfers,
+        )
 
         income = Decimal("0")
         expense = Decimal("0")
 
-        for row in rows:
-            amount = Decimal(row[0])
-            if amount > 0:
-                income += amount
+        for t in transactions:
+            if t.amount > 0:
+                income += t.amount
             else:
-                expense += abs(amount)
+                expense += abs(t.amount)
 
         return income, expense
 

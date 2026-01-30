@@ -24,6 +24,15 @@ class Category(str, Enum):
     OTHER = "Прочее"
 
 
+import re
+
+# Pattern for internal transfers (within same contract/bank)
+INTERNAL_TRANSFER_PATTERN = re.compile(
+    r"внутрибанковский|внутренний\s*перевод|перевод\s+между\s+счетами",
+    re.IGNORECASE,
+)
+
+
 class Transaction(BaseModel):
     """Single financial transaction."""
 
@@ -52,6 +61,10 @@ class Transaction(BaseModel):
     def is_income(self) -> bool:
         """Check if transaction is an income."""
         return self.amount > 0
+
+    def is_internal_transfer(self) -> bool:
+        """Check if transaction is an internal transfer (within same contract)."""
+        return bool(INTERNAL_TRANSFER_PATTERN.search(self.description))
 
 
 class Statement(BaseModel):

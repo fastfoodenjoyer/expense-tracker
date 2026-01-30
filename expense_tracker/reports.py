@@ -27,15 +27,21 @@ class ReportGenerator:
         self,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
+        include_internal_transfers: bool = False,
     ) -> None:
         """Print expense summary by category.
 
         Args:
             date_from: Filter by start date
             date_to: Filter by end date
+            include_internal_transfers: Include internal transfers (default False)
         """
-        summary = self.storage.get_summary(date_from, date_to)
-        income, expense = self.storage.get_totals(date_from, date_to)
+        summary = self.storage.get_summary(
+            date_from, date_to, include_internal_transfers=include_internal_transfers
+        )
+        income, expense = self.storage.get_totals(
+            date_from, date_to, include_internal_transfers=include_internal_transfers
+        )
 
         # Create period string
         period = self._format_period(date_from, date_to)
@@ -116,6 +122,7 @@ class ReportGenerator:
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         limit: int = 10,
+        include_internal_transfers: bool = False,
     ) -> None:
         """Print top expenses.
 
@@ -124,12 +131,14 @@ class ReportGenerator:
             date_from: Filter by start date
             date_to: Filter by end date
             limit: Maximum number of results
+            include_internal_transfers: Include internal transfers (default False)
         """
         transactions = self.storage.get_top_expenses(
             category=category,
             date_from=date_from,
             date_to=date_to,
             limit=limit,
+            include_internal_transfers=include_internal_transfers,
         )
 
         period = self._format_period(date_from, date_to)

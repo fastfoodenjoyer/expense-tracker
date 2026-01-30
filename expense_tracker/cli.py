@@ -125,6 +125,13 @@ def list_transactions(
             help="Maximum number of transactions to show",
         ),
     ] = None,
+    include_internal_transfers: Annotated[
+        bool,
+        typer.Option(
+            "--include-internal-transfers", "-i",
+            help="Include internal transfers between accounts (excluded by default)",
+        ),
+    ] = False,
 ) -> None:
     """List transactions with optional filters."""
     # Parse filters
@@ -145,6 +152,7 @@ def list_transactions(
         date_from=from_dt,
         date_to=to_dt,
         limit=limit,
+        include_internal_transfers=include_internal_transfers,
     )
 
     if not transactions:
@@ -175,6 +183,13 @@ def show_summary(
             help="Year (e.g., 2024)",
         ),
     ] = None,
+    include_internal_transfers: Annotated[
+        bool,
+        typer.Option(
+            "--include-internal-transfers", "-i",
+            help="Include internal transfers between accounts (excluded by default)",
+        ),
+    ] = False,
 ) -> None:
     """Show expense summary by category."""
     # Calculate date range
@@ -194,7 +209,11 @@ def show_summary(
 
     # Print summary
     reports = get_reports()
-    reports.print_summary(date_from=from_dt, date_to=to_dt)
+    reports.print_summary(
+        date_from=from_dt,
+        date_to=to_dt,
+        include_internal_transfers=include_internal_transfers,
+    )
 
 
 @app.command("top")
@@ -227,6 +246,13 @@ def show_top(
             help="End date (DD.MM.YYYY)",
         ),
     ] = None,
+    include_internal_transfers: Annotated[
+        bool,
+        typer.Option(
+            "--include-internal-transfers", "-i",
+            help="Include internal transfers between accounts (excluded by default)",
+        ),
+    ] = False,
 ) -> None:
     """Show top expenses."""
     # Parse filters
@@ -247,6 +273,7 @@ def show_top(
         date_from=from_dt,
         date_to=to_dt,
         limit=limit,
+        include_internal_transfers=include_internal_transfers,
     )
 
 
