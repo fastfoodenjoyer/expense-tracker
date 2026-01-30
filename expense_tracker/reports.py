@@ -96,6 +96,7 @@ class ReportGenerator:
         table.add_column("Описание", style="white", max_width=40)
         table.add_column("Категория", style="yellow")
         table.add_column("Сумма", justify="right")
+        table.add_column("Банк", style="blue")
         table.add_column("Карта", style="dim")
 
         for t in transactions:
@@ -109,6 +110,7 @@ class ReportGenerator:
                 t.description[:40] + "..." if len(t.description) > 40 else t.description,
                 category,
                 f"[{amount_style}]{amount_str}[/{amount_style}]",
+                t.bank,
                 card,
             )
 

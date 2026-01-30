@@ -10,7 +10,7 @@ from rich.console import Console
 from expense_tracker.categorizer import Categorizer
 from expense_tracker.exporter import Exporter
 from expense_tracker.models import Category
-from expense_tracker.parsers.tbank import TBankParser
+from expense_tracker.parsers import get_parser_for_file
 from expense_tracker.reports import ReportGenerator
 from expense_tracker.storage import Storage
 
@@ -62,15 +62,16 @@ def import_statement(
     """Import transactions from a bank statement PDF."""
     console.print(f"[cyan]Импорт файла: {path}[/cyan]")
 
-    # Try T-Bank parser
-    parser = TBankParser()
-    if not parser.can_parse(path):
-        console.print("[red]Ошибка: Формат файла не распознан как выписка Т-Банка[/red]")
+    # Auto-detect parser
+    parser = get_parser_for_file(path)
+    if not parser:
+        console.print("[red]Ошибка: Формат файла не распознан. Поддерживаемые банки: Т-Банк, Альфа-Банк, Яндекс Банк, Озон Банк[/red]")
         raise typer.Exit(1)
 
     # Parse statement
     try:
         statement = parser.parse(path)
+        console.print(f"[cyan]Банк: {statement.bank}[/cyan]")
     except Exception as e:
         console.print(f"[red]Ошибка парсинга: {e}[/red]")
         raise typer.Exit(1)
