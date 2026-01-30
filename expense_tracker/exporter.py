@@ -17,8 +17,6 @@ EXPORT_COLUMNS = [
     "Время",
     "Дата списания",
     "Сумма",
-    "Сумма в валюте операции",
-    "Валюта",
     "Категория",
     "Описание",
     "Карта",
@@ -56,10 +54,6 @@ class Exporter:
             if transaction.posting_date
             else "",
             float(transaction.amount),
-            float(transaction.amount_original)
-            if transaction.amount_original
-            else "",
-            transaction.currency,
             transaction.category.value if transaction.category else "",
             transaction.description,
             transaction.card_number or "",
