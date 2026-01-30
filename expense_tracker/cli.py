@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 
 from expense_tracker.categorizer import Categorizer
+from expense_tracker.exporter import Exporter
 from expense_tracker.models import Category
 from expense_tracker.parsers.tbank import TBankParser
 from expense_tracker.reports import ReportGenerator
@@ -284,6 +285,115 @@ def list_categories() -> None:
     for cat in Category:
         console.print(f"  • {cat.value}")
     console.print()
+
+
+@app.command("export")
+def export_transactions(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to output Excel file (.xlsx)",
+        ),
+    ],
+    google_sheet: Annotated[
+        Optional[str],
+        typer.Option(
+            "--google-sheet", "-g",
+            help="Google Sheets spreadsheet ID for sync",
+        ),
+    ] = None,
+    worksheet: Annotated[
+        str,
+        typer.Option(
+            "--worksheet", "-w",
+            help="Google Sheets worksheet name",
+        ),
+    ] = "Транзакции",
+    credentials: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--credentials",
+            help="Path to Google service account JSON",
+        ),
+    ] = None,
+    month: Annotated[
+        Optional[int],
+        typer.Option(
+            "--month", "-m",
+            help="Filter by month (1-12)",
+            min=1,
+            max=12,
+        ),
+    ] = None,
+    year: Annotated[
+        Optional[int],
+        typer.Option(
+            "--year", "-y",
+            help="Filter by year (e.g., 2024)",
+        ),
+    ] = None,
+    include_internal_transfers: Annotated[
+        bool,
+        typer.Option(
+            "--include-internal-transfers", "-i",
+            help="Include internal transfers between accounts (excluded by default)",
+        ),
+    ] = False,
+) -> None:
+    """Export transactions to Excel file and optionally sync to Google Sheets."""
+    # Calculate date range
+    from_dt = None
+    to_dt = None
+
+    if month or year:
+        now = datetime.now()
+        y = year or now.year
+        m = month or now.month
+
+        from_dt = datetime(y, m, 1)
+        if m == 12:
+            to_dt = datetime(y + 1, 1, 1)
+        else:
+            to_dt = datetime(y, m + 1, 1)
+
+    # Get transactions
+    storage = get_storage()
+    transactions = storage.get_transactions(
+        date_from=from_dt,
+        date_to=to_dt,
+        include_internal_transfers=include_internal_transfers,
+    )
+
+    if not transactions:
+        console.print("[yellow]Нет транзакций для экспорта[/yellow]")
+        raise typer.Exit(0)
+
+    # Export to Excel
+    exporter = Exporter(credentials_path=credentials)
+
+    try:
+        excel_path = exporter.export_to_excel(transactions, path)
+        console.print(f"[green]Экспортировано {len(transactions)} транзакций в {excel_path}[/green]")
+    except Exception as e:
+        console.print(f"[red]Ошибка экспорта в Excel: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Sync to Google Sheets if requested
+    if google_sheet:
+        console.print(f"[cyan]Синхронизация с Google Sheets...[/cyan]")
+        try:
+            added, skipped = exporter.export_to_google_sheets(
+                transactions, google_sheet, worksheet
+            )
+            console.print(
+                f"[green]Google Sheets: добавлено {added}, пропущено дубликатов {skipped}[/green]"
+            )
+        except FileNotFoundError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[red]Ошибка синхронизации с Google Sheets: {e}[/red]")
+            raise typer.Exit(1)
 
 
 if __name__ == "__main__":

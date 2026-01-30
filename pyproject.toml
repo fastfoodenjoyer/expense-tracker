@@ -9,6 +9,9 @@ dependencies = [
     "typer>=0.12.0",
     "pydantic>=2.0.0",
     "rich>=13.0.0",
+    "openpyxl>=3.1.0",
+    "gspread>=6.0.0",
+    "google-auth>=2.0.0",
 ]
 
 [project.scripts]
@@ -19,3 +22,6 @@ package = true
 dev-dependencies = [
     "pytest>=8.0.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["expense_tracker*"]
