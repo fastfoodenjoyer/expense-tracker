@@ -397,5 +397,14 @@ def export_transactions(
             raise typer.Exit(1)
 
 
+@app.command("bot")
+def run_bot() -> None:
+    """Run the Telegram bot."""
+    from expense_tracker.bot.main import main as bot_main
+
+    console.print("[cyan]Запуск Telegram бота...[/cyan]")
+    bot_main()
+
+
 if __name__ == "__main__":
     app()
