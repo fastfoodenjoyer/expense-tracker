@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 FROM python:3.13-slim AS builder
 
 # Install uv
@@ -12,15 +10,13 @@ COPY pyproject.toml uv.lock* ./
 COPY README.md ./
 
 # Install dependencies
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev
 
 # Copy source code
 COPY expense_tracker ./expense_tracker
 
 # Install the project
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev
 
 
 FROM python:3.13-slim
