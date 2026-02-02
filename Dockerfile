@@ -9,14 +9,14 @@ WORKDIR /app
 COPY pyproject.toml uv.lock* ./
 COPY README.md ./
 
-# Install dependencies
+# Install dependencies only
 RUN uv sync --frozen --no-install-project --no-dev
 
 # Copy source code
 COPY expense_tracker ./expense_tracker
 
-# Install the project
-RUN uv sync --frozen --no-dev
+# Build and install the package (non-editable)
+RUN uv pip install . --no-deps
 
 
 FROM python:3.13-slim
