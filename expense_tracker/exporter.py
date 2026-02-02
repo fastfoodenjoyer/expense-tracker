@@ -1,9 +1,7 @@
 """Export transactions to Excel and Google Sheets."""
 
-from datetime import datetime
-from decimal import Decimal
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side
@@ -27,26 +25,22 @@ EXPORT_COLUMNS = [
 class Exporter:
     """Export transactions to Excel and Google Sheets."""
 
-    def __init__(self, credentials_path: Optional[Path] = None):
+    def __init__(
+        self,
+        credentials_path: Path | None = None,
+        credentials_info: dict[str, Any] | None = None,
+    ):
         """Initialize exporter.
 
         Args:
-            credentials_path: Path to Google service account JSON.
-                            Defaults to ~/.expense-tracker/credentials.json
+            credentials_path: Path to Google service account JSON file.
+            credentials_info: Google service account info as dict (takes priority).
         """
-        self.credentials_path = credentials_path or (
-            Path.home() / ".expense-tracker" / "credentials.json"
-        )
+        self.credentials_path = credentials_path
+        self.credentials_info = credentials_info
 
     def _transaction_to_row(self, transaction: Transaction) -> list:
-        """Convert transaction to a row for export.
-
-        Args:
-            transaction: Transaction to convert
-
-        Returns:
-            List of values for each column
-        """
+        """Convert transaction to a row for export."""
         return [
             transaction.date.strftime("%d.%m.%Y"),
             transaction.date.strftime("%H:%M:%S"),
@@ -63,15 +57,7 @@ class Exporter:
     def export_to_excel(
         self, transactions: list[Transaction], filepath: Path
     ) -> Path:
-        """Export transactions to Excel file.
-
-        Args:
-            transactions: List of transactions to export
-            filepath: Path to output Excel file
-
-        Returns:
-            Path to created file
-        """
+        """Export transactions to Excel file."""
         wb = Workbook()
         ws = wb.active
         ws.title = "Транзакции"
@@ -122,53 +108,55 @@ class Exporter:
     def _get_gspread_client(self):
         """Get authenticated gspread client.
 
+        Supports both credentials_info dict and credentials_path file.
+
         Returns:
-            Authenticated gspread client
+            Authenticated gspread client.
 
         Raises:
-            FileNotFoundError: If credentials file not found
+            ValueError: If no credentials provided.
+            FileNotFoundError: If credentials file not found.
         """
         import gspread
         from google.oauth2.service_account import Credentials
-
-        if not self.credentials_path.exists():
-            raise FileNotFoundError(
-                f"Google credentials not found at {self.credentials_path}\n"
-                "Please create a service account and download the JSON key:\n"
-                "1. Go to https://console.cloud.google.com/\n"
-                "2. Create a service account\n"
-                "3. Download the JSON key\n"
-                f"4. Save it to {self.credentials_path}"
-            )
 
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-        credentials = Credentials.from_service_account_file(
-            str(self.credentials_path), scopes=scopes
+
+        # Prefer credentials_info (from database)
+        if self.credentials_info:
+            credentials = Credentials.from_service_account_info(
+                self.credentials_info, scopes=scopes
+            )
+            return gspread.authorize(credentials)
+
+        # Fallback to file path (for CLI)
+        if self.credentials_path:
+            if not self.credentials_path.exists():
+                raise FileNotFoundError(
+                    f"Google credentials not found at {self.credentials_path}"
+                )
+            credentials = Credentials.from_service_account_file(
+                str(self.credentials_path), scopes=scopes
+            )
+            return gspread.authorize(credentials)
+
+        raise ValueError(
+            "No Google credentials provided. "
+            "Set credentials via bot or provide credentials file path."
         )
-        return gspread.authorize(credentials)
 
     def _find_duplicates(
         self, worksheet, transactions: list[Transaction]
     ) -> set[tuple]:
-        """Find existing transactions in worksheet to avoid duplicates.
-
-        Args:
-            worksheet: gspread worksheet
-            transactions: Transactions to check
-
-        Returns:
-            Set of tuples representing existing rows (all fields)
-        """
+        """Find existing transactions in worksheet to avoid duplicates."""
         existing_rows = set()
 
-        # Get all existing data (skip header row)
         all_values = worksheet.get_all_values()
         if len(all_values) > 1:
             for row in all_values[1:]:
-                # Convert row to tuple for comparison
                 if len(row) >= len(EXPORT_COLUMNS):
                     existing_rows.add(tuple(row[: len(EXPORT_COLUMNS)]))
 
@@ -183,12 +171,12 @@ class Exporter:
         """Export transactions to Google Sheets.
 
         Args:
-            transactions: List of transactions to export
-            spreadsheet_id: Google Sheets spreadsheet ID
-            worksheet_name: Name of worksheet to use
+            transactions: List of transactions to export.
+            spreadsheet_id: Google Sheets spreadsheet ID.
+            worksheet_name: Name of worksheet to use.
 
         Returns:
-            Tuple of (added_count, skipped_duplicates_count)
+            Tuple of (added_count, skipped_duplicates_count).
         """
         client = self._get_gspread_client()
         spreadsheet = client.open_by_key(spreadsheet_id)
@@ -204,7 +192,6 @@ class Exporter:
         # Check if headers exist
         all_values = worksheet.get_all_values()
         if not all_values:
-            # Add headers
             worksheet.append_row(EXPORT_COLUMNS)
             all_values = [EXPORT_COLUMNS]
 
@@ -217,7 +204,6 @@ class Exporter:
 
         for transaction in transactions:
             row_data = self._transaction_to_row(transaction)
-            # Convert to strings for comparison (as they come from sheet)
             row_tuple = tuple(str(v) if v != "" else "" for v in row_data)
 
             if row_tuple in existing_rows:

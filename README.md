@@ -178,18 +178,32 @@ R2_BUCKET_NAME=expense-tracker-backups
 
 ## Google Sheets
 
-### Настройка
+### Настройка через бота (рекомендуется)
+
+Каждый пользователь может настроить свой Google Sheets:
 
 1. Создайте проект в [Google Cloud Console](https://console.cloud.google.com/)
 2. Включите Google Sheets API
-3. Создайте Service Account и скачайте JSON-ключ
-4. Сохраните ключ как `~/.expense-tracker/credentials.json`
-5. Поделитесь таблицей с email сервисного аккаунта
+3. IAM → Service Accounts → Create Service Account
+4. Keys → Add Key → Create new key → JSON
+5. В боте: `/set_credentials` и отправьте скачанный JSON файл
+6. В боте: `/set_spreadsheet <ID таблицы>`
+7. Поделитесь таблицей с email сервисного аккаунта
 
-### Использование
+Credentials хранятся в базе данных в зашифрованном виде.
+
+**Команды бота:**
+- `/set_credentials` — загрузить JSON ключ
+- `/set_spreadsheet <ID>` — установить ID таблицы
+- `/clear_credentials` — удалить credentials
+- `⚙️ Настройки` — проверить текущие настройки
+
+### CLI использование
+
+Для CLI можно использовать файл credentials:
 
 ```bash
-expense-tracker export data.xlsx --google-sheet YOUR_SPREADSHEET_ID
+expense-tracker export data.xlsx --google-sheet ID --credentials ~/.expense-tracker/credentials.json
 ```
 
 ## Деплой на Railway
@@ -238,8 +252,9 @@ expense-tracker/
 │   ├── __init__.py
 │   ├── cli.py              # CLI интерфейс (Typer)
 │   ├── models.py           # Pydantic модели
-│   ├── storage.py          # SQLite хранилище
+│   ├── storage.py          # SQLite хранилище + user_settings
 │   ├── backup.py           # Бэкапы в R2
+│   ├── crypto.py           # Шифрование credentials
 │   ├── categorizer.py      # Категоризация по правилам
 │   ├── reports.py          # Генерация отчётов
 │   ├── exporter.py         # Экспорт Excel/Google Sheets
@@ -262,7 +277,8 @@ expense-tracker/
 │           ├── import_pdf.py
 │           ├── export.py
 │           ├── reports.py
-│           └── categories.py
+│           ├── categories.py
+│           └── settings.py # Google credentials
 ├── pyproject.toml
 ├── Dockerfile
 ├── railway.toml

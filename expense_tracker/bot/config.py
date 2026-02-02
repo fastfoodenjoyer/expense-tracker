@@ -47,6 +47,12 @@ class Settings(BaseSettings):
         description="JSON array of AI providers with failover support",
     )
 
+    # Encryption key for sensitive data (auto-generated if not set)
+    encryption_key: str = Field(
+        default="default-expense-tracker-key-change-in-production",
+        description="Secret key for encrypting sensitive data",
+    )
+
     # Cloudflare R2 settings
     r2_account_id: str | None = Field(default=None, description="Cloudflare account ID")
     r2_access_key_id: str | None = Field(default=None, description="R2 Access Key ID")

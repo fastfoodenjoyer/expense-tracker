@@ -62,6 +62,16 @@ class Storage:
                 ON transactions(category)
             """)
 
+            # User settings table for per-user Google credentials
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id INTEGER PRIMARY KEY,
+                    google_credentials_encrypted TEXT,
+                    google_spreadsheet_id TEXT,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
             conn.commit()
 
     def add_transaction(self, transaction: Transaction) -> bool:
@@ -330,3 +340,122 @@ class Storage:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM transactions")
             conn.commit()
+
+    # ============ User Settings Methods ============
+
+    def save_user_google_settings(
+        self,
+        user_id: int,
+        credentials_encrypted: str | None = None,
+        spreadsheet_id: str | None = None,
+    ) -> None:
+        """Save user's Google settings.
+
+        Args:
+            user_id: Telegram user ID.
+            credentials_encrypted: Encrypted Google credentials JSON.
+            spreadsheet_id: Google Spreadsheet ID.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            # Check if user exists
+            cursor = conn.execute(
+                "SELECT user_id FROM user_settings WHERE user_id = ?",
+                (user_id,),
+            )
+            exists = cursor.fetchone() is not None
+
+            if exists:
+                # Update existing
+                updates = []
+                params = []
+                if credentials_encrypted is not None:
+                    updates.append("google_credentials_encrypted = ?")
+                    params.append(credentials_encrypted)
+                if spreadsheet_id is not None:
+                    updates.append("google_spreadsheet_id = ?")
+                    params.append(spreadsheet_id)
+
+                if updates:
+                    updates.append("updated_at = ?")
+                    params.append(datetime.now().isoformat())
+                    params.append(user_id)
+                    conn.execute(
+                        f"UPDATE user_settings SET {', '.join(updates)} WHERE user_id = ?",
+                        params,
+                    )
+            else:
+                # Insert new
+                conn.execute(
+                    """
+                    INSERT INTO user_settings (
+                        user_id, google_credentials_encrypted,
+                        google_spreadsheet_id, updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        credentials_encrypted,
+                        spreadsheet_id,
+                        datetime.now().isoformat(),
+                    ),
+                )
+            conn.commit()
+
+    def get_user_google_settings(
+        self, user_id: int
+    ) -> tuple[str | None, str | None]:
+        """Get user's Google settings.
+
+        Args:
+            user_id: Telegram user ID.
+
+        Returns:
+            Tuple of (encrypted_credentials, spreadsheet_id).
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT google_credentials_encrypted, google_spreadsheet_id
+                FROM user_settings WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+            row = cursor.fetchone()
+
+            if row:
+                return row["google_credentials_encrypted"], row["google_spreadsheet_id"]
+            return None, None
+
+    def delete_user_google_credentials(self, user_id: int) -> bool:
+        """Delete user's Google credentials.
+
+        Args:
+            user_id: Telegram user ID.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE user_settings
+                SET google_credentials_encrypted = NULL, updated_at = ?
+                WHERE user_id = ?
+                """,
+                (datetime.now().isoformat(), user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def has_user_google_credentials(self, user_id: int) -> bool:
+        """Check if user has Google credentials set.
+
+        Args:
+            user_id: Telegram user ID.
+
+        Returns:
+            True if credentials are set.
+        """
+        creds, _ = self.get_user_google_settings(user_id)
+        return creds is not None

@@ -1,5 +1,6 @@
 """Export handlers: Excel and Google Sheets."""
 
+import json
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,8 @@ from expense_tracker.bot.keyboards import (
     ButtonText,
 )
 from expense_tracker.bot.states import ExportExcelStates, GoogleSheetsStates
-from expense_tracker.bot.config import config
+from expense_tracker.bot.config import get_settings
+from expense_tracker.crypto import Encryptor
 from expense_tracker.exporter import Exporter
 from expense_tracker.storage import Storage
 
@@ -59,6 +61,29 @@ def get_export_filename(period: str) -> str:
     return "expenses_all.xlsx"
 
 
+def get_user_google_credentials(user_id: int) -> tuple[dict | None, str | None]:
+    """Get decrypted Google credentials for user.
+
+    Returns:
+        Tuple of (credentials_dict, spreadsheet_id).
+    """
+    storage = Storage()
+    creds_encrypted, spreadsheet_id = storage.get_user_google_settings(user_id)
+
+    if not creds_encrypted:
+        return None, spreadsheet_id
+
+    settings = get_settings()
+    encryptor = Encryptor(settings.encryption_key)
+
+    try:
+        creds_json = encryptor.decrypt(creds_encrypted)
+        creds_dict = json.loads(creds_json)
+        return creds_dict, spreadsheet_id
+    except Exception:
+        return None, spreadsheet_id
+
+
 # ============ Excel export handlers ============
 
 
@@ -98,7 +123,6 @@ async def export_excel(callback: CallbackQuery, state: FSMContext, bot: Bot) -> 
     await callback.answer()
 
     try:
-        # Create temp file
         filename = get_export_filename(period)
         with tempfile.TemporaryDirectory() as tmp_dir:
             filepath = Path(tmp_dir) / filename
@@ -106,7 +130,6 @@ async def export_excel(callback: CallbackQuery, state: FSMContext, bot: Bot) -> 
             exporter = Exporter()
             exporter.export_to_excel(transactions, filepath)
 
-            # Send file
             document = FSInputFile(filepath, filename=filename)
             await bot.send_document(
                 callback.message.chat.id,
@@ -130,10 +153,22 @@ async def export_excel(callback: CallbackQuery, state: FSMContext, bot: Bot) -> 
 @router.message(F.text == ButtonText.GOOGLE_SHEETS)
 async def start_gsheets_export(message: Message, state: FSMContext) -> None:
     """Start Google Sheets export flow."""
-    if not config.google_spreadsheet_id:
+    user_id = message.from_user.id
+    credentials, spreadsheet_id = get_user_google_credentials(user_id)
+
+    if not credentials:
         await message.answer(
             "⚠️ Google Sheets не настроен.\n\n"
-            "Добавьте GOOGLE_SPREADSHEET_ID в файл .env",
+            "Используйте /set_credentials чтобы загрузить JSON ключ.\n"
+            "Используйте /set_spreadsheet чтобы указать ID таблицы.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    if not spreadsheet_id:
+        await message.answer(
+            "⚠️ Не указан ID таблицы.\n\n"
+            "Используйте /set_spreadsheet чтобы указать ID таблицы.",
             reply_markup=main_menu_keyboard(),
         )
         return
@@ -141,7 +176,7 @@ async def start_gsheets_export(message: Message, state: FSMContext) -> None:
     await state.set_state(GoogleSheetsStates.waiting_for_confirmation)
     await message.answer(
         "Отправить данные в Google Sheets?\n"
-        f"📋 ID таблицы: {config.google_spreadsheet_id[:20]}...",
+        f"📋 ID таблицы: <code>{spreadsheet_id[:30]}...</code>",
         reply_markup=google_sheets_confirm_keyboard(),
     )
 
@@ -151,6 +186,17 @@ async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
     """Export to Google Sheets."""
     await callback.message.edit_text("⏳ Отправляю данные в Google Sheets...")
     await callback.answer()
+
+    user_id = callback.from_user.id
+    credentials, spreadsheet_id = get_user_google_credentials(user_id)
+
+    if not credentials or not spreadsheet_id:
+        await callback.message.edit_text(
+            "❌ Ошибка: credentials или spreadsheet_id не найдены.\n"
+            "Используйте /set_credentials и /set_spreadsheet для настройки."
+        )
+        await state.clear()
+        return
 
     storage = Storage()
     transactions = storage.get_transactions(include_internal_transfers=False)
@@ -164,10 +210,10 @@ async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     try:
-        exporter = Exporter(credentials_path=config.credentials_path)
+        exporter = Exporter(credentials_info=credentials)
         added, skipped = exporter.export_to_google_sheets(
             transactions,
-            config.google_spreadsheet_id,
+            spreadsheet_id,
             "Транзакции",
         )
 
@@ -177,14 +223,16 @@ async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
             f"⏭️ Пропущено (дубликаты): {skipped}"
         )
 
-    except FileNotFoundError as e:
-        await callback.message.edit_text(
-            f"❌ Ошибка: {e}\n\n"
-            "Создайте service account и сохраните credentials.json в "
-            "~/.expense-tracker/"
-        )
-
     except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {e}")
+        error_msg = str(e)
+        if "invalid_grant" in error_msg.lower():
+            error_msg = "Невалидные credentials. Попробуйте загрузить их заново."
+        elif "not found" in error_msg.lower():
+            error_msg = (
+                "Таблица не найдена или нет доступа.\n"
+                "Убедитесь, что поделились таблицей с Service Account email."
+            )
+
+        await callback.message.edit_text(f"❌ Ошибка: {error_msg}")
 
     await state.clear()

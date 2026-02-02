@@ -22,6 +22,7 @@ class ButtonText:
     EXPORT_EXCEL = "📁 Экспорт Excel"
     GOOGLE_SHEETS = "📤 Google Sheets"
     CATEGORIES = "📑 Категории"
+    SETTINGS = "⚙️ Настройки"
 
     # Banks
     TBANK = "T-Bank"
@@ -65,7 +66,10 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=ButtonText.EXPORT_EXCEL),
                 KeyboardButton(text=ButtonText.GOOGLE_SHEETS),
             ],
-            [KeyboardButton(text=ButtonText.CATEGORIES)],
+            [
+                KeyboardButton(text=ButtonText.CATEGORIES),
+                KeyboardButton(text=ButtonText.SETTINGS),
+            ],
         ],
         resize_keyboard=True,
     )
