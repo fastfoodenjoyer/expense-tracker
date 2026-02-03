@@ -10,6 +10,7 @@ from pathlib import Path
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
+from gspread.exceptions import APIError
 
 from expense_tracker.bot.keyboards import (
     period_selection_keyboard,
@@ -236,32 +237,47 @@ async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
             f"⏭️ Пропущено (дубликаты): {skipped}"
         )
 
-    except Exception as e:
-        # Log full traceback
-        logger.error(f"Google Sheets export failed: {e}")
+    except APIError as api_error:
+        string_error = api_error.error["message"]
+
+        logger.error(f"Google Sheets export failed: {string_error}")
         logger.error(traceback.format_exc())
 
-        error_msg = str(e) if str(e) else type(e).__name__
-
         # User-friendly error messages
-        error_lower = error_msg.lower()
+        error_lower = string_error.lower()
         if "invalid_grant" in error_lower:
-            error_msg = "Невалидные credentials. Попробуйте загрузить их заново."
-        elif "not found" in error_lower or "404" in error_lower:
+            error_msg = f"Невалидные credentials. Попробуйте загрузить их заново. Текст ошибки: {string_error}"
+
+        elif "not found" in error_lower or "404" in error_lower or api_error.response.status_code == 404:
             error_msg = (
                 "Таблица не найдена или нет доступа.\n"
-                "Убедитесь, что поделились таблицей с Service Account email."
+                f"Убедитесь, что поделились таблицей с Service Account email. Текст ошибки: {string_error}"
             )
-        elif "permission" in error_lower or "403" in error_lower:
+
+        elif "permission" in error_lower or "403" in error_lower or api_error.response.status_code == 403:
             error_msg = (
                 "Нет доступа к таблице.\n"
-                "Поделитесь таблицей с Service Account email."
+                f"Поделитесь таблицей с Service Account email. Текст ошибки: {string_error}"
             )
-        elif "quota" in error_lower or "rate" in error_lower:
+
+        elif "quota" in error_lower or "rate" in error_lower or api_error.response.status_code == 429:
             error_msg = "Превышен лимит запросов. Попробуйте позже."
+
+        else:
+            error_msg = string_error
 
         await callback.message.edit_text(
             f"❌ Ошибка экспорта в Google Sheets:\n\n<code>{error_msg[:500]}</code>"
+        )
+
+    except Exception as e:
+        # Log full traceback
+        error_msg = str(e) if str(e) else type(e).__name__
+        logger.error(f"Google Sheets export failed: {e}")
+        logger.error(traceback.format_exc())
+
+        await callback.message.edit_text(
+            f"❌ Неопознанная ошибка экспорта в Google Sheets:\n\n<code>{error_msg[:500]}</code>"
         )
 
     await state.clear()
