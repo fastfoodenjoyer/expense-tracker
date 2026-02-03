@@ -153,6 +153,30 @@ class Exporter:
             "Set credentials via bot or provide credentials file path."
         )
 
+    def _normalize_value(self, value: str) -> str:
+        """Normalize value for comparison.
+
+        Handles differences in number formatting between Python and Google Sheets.
+        E.g., "100.0" and "100" should be considered equal.
+        """
+        value = str(value).strip()
+        if not value:
+            return ""
+
+        # Try to normalize as number
+        try:
+            num = float(value.replace(",", ".").replace(" ", ""))
+            # Return consistent format: no trailing zeros for integers
+            if num == int(num):
+                return str(int(num))
+            return f"{num:.2f}"
+        except (ValueError, TypeError):
+            return value
+
+    def _normalize_row(self, row: list) -> tuple:
+        """Normalize a row for comparison."""
+        return tuple(self._normalize_value(v) for v in row[:len(EXPORT_COLUMNS)])
+
     def _find_duplicates(
         self, worksheet, transactions: list[Transaction]
     ) -> set[tuple]:
@@ -163,8 +187,9 @@ class Exporter:
         if len(all_values) > 1:
             for row in all_values[1:]:
                 if len(row) >= len(EXPORT_COLUMNS):
-                    existing_rows.add(tuple(row[: len(EXPORT_COLUMNS)]))
+                    existing_rows.add(self._normalize_row(row))
 
+        logger.info(f"Found {len(existing_rows)} existing rows in worksheet")
         return existing_rows
 
     def export_to_google_sheets(
@@ -230,7 +255,7 @@ class Exporter:
 
         for transaction in transactions:
             row_data = self._transaction_to_row(transaction)
-            row_tuple = tuple(str(v) if v != "" else "" for v in row_data)
+            row_tuple = self._normalize_row(row_data)
 
             if row_tuple in existing_rows:
                 skipped += 1
