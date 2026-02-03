@@ -19,6 +19,7 @@ class Category(str, Enum):
     ENTERTAINMENT = "Развлечения"
     HEALTH = "Здоровье"
     CLOTHING = "Одежда"
+    UTILITIES = "ЖКХ"
     CASHBACK = "Кэшбэк"
     CASH = "Наличные"
     OTHER = "Прочее"

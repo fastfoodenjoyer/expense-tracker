@@ -145,6 +145,15 @@ async def on_startup(bot: Bot) -> None:
         else:
             logging.info("No R2 backup found or restore failed, starting fresh")
 
+    # Migrate categories (re-categorize TRANSFERS and OTHER with current rules)
+    from expense_tracker.storage import Storage
+    storage = Storage()
+    checked, updated = storage.migrate_categories()
+    if updated > 0:
+        logging.info(f"Category migration: checked {checked}, updated {updated} transactions")
+    else:
+        logging.debug(f"Category migration: checked {checked}, no updates needed")
+
     # Setup and start scheduler
     sched = setup_scheduler()
     sched.start()

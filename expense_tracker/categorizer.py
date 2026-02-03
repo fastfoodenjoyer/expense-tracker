@@ -264,6 +264,31 @@ DEFAULT_RULES: list[CategoryRule] = [
             r"КАРИ\b",
         ],
     ),
+    # Utilities (housing and communal services)
+    CategoryRule(
+        category=Category.UTILITIES,
+        patterns=[
+            r"КОММУНАЛЬН",
+            r"ЖКХ",
+            r"ЖКУ",
+            r"\bГСК\b",  # Гаражно-строительный кооператив
+            r"\bТСЖ\b",  # Товарищество собственников жилья
+            r"\bУК\s",   # Управляющая компания
+            r"УПРАВЛЯЮЩАЯ\s*КОМПАНИЯ",
+            r"ВОДОКАНАЛ",
+            r"ТЕПЛОСЕТЬ",
+            r"ЭНЕРГОСБЫТ",
+            r"ГАЗПРОМ\s*МЕЖРЕГИОНГАЗ",
+            r"МОСЭНЕРГО",
+            r"ПЕТРОЭЛЕКТРОСБЫТ",
+            r"ЛЕНЭНЕРГО",
+            r"ТЭК\s*СПБ",
+            r"СЕРВИС.?НЕДВИЖИМОСТЬ",
+            r"КАПИТАЛЬНЫЙ\s*РЕМОНТ",
+            r"КАПРЕМОНТ",
+            r"ФОНД\s*КАПИТАЛЬНОГО",
+        ],
+    ),
     # Transfers
     CategoryRule(
         category=Category.TRANSFERS,

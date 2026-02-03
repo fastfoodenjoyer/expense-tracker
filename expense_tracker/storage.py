@@ -459,3 +459,67 @@ class Storage:
         """
         creds, _ = self.get_user_google_settings(user_id)
         return creds is not None
+
+    # ============ Migration Methods ============
+
+    def migrate_categories(self) -> tuple[int, int]:
+        """Re-categorize transactions in TRANSFERS and OTHER categories.
+
+        Applies current categorization rules to find better matches.
+        Useful when new categories or rules are added.
+
+        Returns:
+            Tuple of (checked_count, updated_count).
+        """
+        from expense_tracker.categorizer import Categorizer
+
+        categorizer = Categorizer()
+        categories_to_check = [Category.TRANSFERS.value, Category.OTHER.value]
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT id, date, posting_date, amount, amount_original,
+                       currency, description, category, card_number, bank
+                FROM transactions
+                WHERE category IN (?, ?)
+                """,
+                categories_to_check,
+            )
+            rows = cursor.fetchall()
+
+            checked = 0
+            updated = 0
+
+            for row in rows:
+                checked += 1
+                transaction = self._row_to_transaction(row)
+                old_category = transaction.category
+
+                # Clear category to let categorizer work fresh
+                transaction.category = None
+                new_category = categorizer.categorize(transaction)
+
+                # Update only if new category is more specific
+                # (not OTHER for TRANSFERS, not TRANSFERS for OTHER)
+                should_update = False
+                if old_category == Category.TRANSFERS:
+                    # Update if found something more specific than TRANSFERS/OTHER
+                    if new_category not in (Category.TRANSFERS, Category.OTHER):
+                        should_update = True
+                elif old_category == Category.OTHER:
+                    # Update if found any specific category
+                    if new_category != Category.OTHER:
+                        should_update = True
+
+                if should_update:
+                    conn.execute(
+                        "UPDATE transactions SET category = ? WHERE id = ?",
+                        (new_category.value, row["id"]),
+                    )
+                    updated += 1
+
+            conn.commit()
+
+        return checked, updated
