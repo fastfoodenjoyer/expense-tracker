@@ -1,7 +1,9 @@
 """Export handlers: Excel and Google Sheets."""
 
 import json
+import logging
 import tempfile
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +24,7 @@ from expense_tracker.exporter import Exporter
 from expense_tracker.storage import Storage
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 def get_period_dates(period: str) -> tuple:
@@ -70,6 +73,8 @@ def get_user_google_credentials(user_id: int) -> tuple[dict | None, str | None]:
     storage = Storage()
     creds_encrypted, spreadsheet_id = storage.get_user_google_settings(user_id)
 
+    logger.info(f"User {user_id}: creds_encrypted={bool(creds_encrypted)}, spreadsheet_id={spreadsheet_id}")
+
     if not creds_encrypted:
         return None, spreadsheet_id
 
@@ -79,8 +84,11 @@ def get_user_google_credentials(user_id: int) -> tuple[dict | None, str | None]:
     try:
         creds_json = encryptor.decrypt(creds_encrypted)
         creds_dict = json.loads(creds_json)
+        logger.info(f"User {user_id}: credentials decrypted OK, client_email={creds_dict.get('client_email', 'N/A')}")
         return creds_dict, spreadsheet_id
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to decrypt credentials for user {user_id}: {e}")
+        logger.error(traceback.format_exc())
         return None, spreadsheet_id
 
 
@@ -184,10 +192,12 @@ async def start_gsheets_export(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data == "gsheets:confirm")
 async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
     """Export to Google Sheets."""
+    user_id = callback.from_user.id
+    logger.info(f"User {user_id}: Starting Google Sheets export")
+
     await callback.message.edit_text("⏳ Отправляю данные в Google Sheets...")
     await callback.answer()
 
-    user_id = callback.from_user.id
     credentials, spreadsheet_id = get_user_google_credentials(user_id)
 
     if not credentials or not spreadsheet_id:
@@ -200,6 +210,7 @@ async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
 
     storage = Storage()
     transactions = storage.get_transactions(include_internal_transfers=False)
+    logger.info(f"User {user_id}: Found {len(transactions)} transactions to export")
 
     if not transactions:
         await callback.message.edit_text(
@@ -210,6 +221,7 @@ async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     try:
+        logger.info(f"User {user_id}: Creating exporter and calling export_to_google_sheets")
         exporter = Exporter(credentials_info=credentials)
         added, skipped = exporter.export_to_google_sheets(
             transactions,
@@ -217,6 +229,7 @@ async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
             "Транзакции",
         )
 
+        logger.info(f"User {user_id}: Export successful - added={added}, skipped={skipped}")
         await callback.message.edit_text(
             "✅ Данные отправлены в Google Sheets\n\n"
             f"➕ Добавлено: {added} записей\n"
@@ -224,15 +237,31 @@ async def export_gsheets(callback: CallbackQuery, state: FSMContext) -> None:
         )
 
     except Exception as e:
-        error_msg = str(e)
-        if "invalid_grant" in error_msg.lower():
+        # Log full traceback
+        logger.error(f"Google Sheets export failed: {e}")
+        logger.error(traceback.format_exc())
+
+        error_msg = str(e) if str(e) else type(e).__name__
+
+        # User-friendly error messages
+        error_lower = error_msg.lower()
+        if "invalid_grant" in error_lower:
             error_msg = "Невалидные credentials. Попробуйте загрузить их заново."
-        elif "not found" in error_msg.lower():
+        elif "not found" in error_lower or "404" in error_lower:
             error_msg = (
                 "Таблица не найдена или нет доступа.\n"
                 "Убедитесь, что поделились таблицей с Service Account email."
             )
+        elif "permission" in error_lower or "403" in error_lower:
+            error_msg = (
+                "Нет доступа к таблице.\n"
+                "Поделитесь таблицей с Service Account email."
+            )
+        elif "quota" in error_lower or "rate" in error_lower:
+            error_msg = "Превышен лимит запросов. Попробуйте позже."
 
-        await callback.message.edit_text(f"❌ Ошибка: {error_msg}")
+        await callback.message.edit_text(
+            f"❌ Ошибка экспорта в Google Sheets:\n\n<code>{error_msg[:500]}</code>"
+        )
 
     await state.clear()

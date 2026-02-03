@@ -1,5 +1,6 @@
 """Export transactions to Excel and Google Sheets."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,8 @@ from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from expense_tracker.models import Transaction
+
+logger = logging.getLogger(__name__)
 
 # Column headers for export
 EXPORT_COLUMNS = [
@@ -127,10 +130,13 @@ class Exporter:
 
         # Prefer credentials_info (from database)
         if self.credentials_info:
+            logger.info(f"Using credentials_info, client_email={self.credentials_info.get('client_email', 'N/A')}")
             credentials = Credentials.from_service_account_info(
                 self.credentials_info, scopes=scopes
             )
-            return gspread.authorize(credentials)
+            client = gspread.authorize(credentials)
+            logger.info("gspread client authorized successfully")
+            return client
 
         # Fallback to file path (for CLI)
         if self.credentials_path:
@@ -138,10 +144,13 @@ class Exporter:
                 raise FileNotFoundError(
                     f"Google credentials not found at {self.credentials_path}"
                 )
+            logger.info(f"Using credentials from file: {self.credentials_path}")
             credentials = Credentials.from_service_account_file(
                 str(self.credentials_path), scopes=scopes
             )
-            return gspread.authorize(credentials)
+            client = gspread.authorize(credentials)
+            logger.info("gspread client authorized successfully")
+            return client
 
         raise ValueError(
             "No Google credentials provided. "
@@ -178,8 +187,12 @@ class Exporter:
         Returns:
             Tuple of (added_count, skipped_duplicates_count).
         """
+        logger.info(f"Starting export to Google Sheets: spreadsheet_id={spreadsheet_id}, transactions={len(transactions)}")
+
         client = self._get_gspread_client()
+        logger.info(f"Opening spreadsheet by key: {spreadsheet_id}")
         spreadsheet = client.open_by_key(spreadsheet_id)
+        logger.info(f"Spreadsheet opened: {spreadsheet.title}")
 
         # Get or create worksheet
         try:
