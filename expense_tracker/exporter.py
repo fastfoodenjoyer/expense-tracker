@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 EXPORT_COLUMNS = [
     "Дата",
     "Время",
-    "Дата списания",
     "Сумма",
     "Категория",
     "Описание",
@@ -47,9 +46,6 @@ class Exporter:
         return [
             transaction.date.strftime("%d.%m.%Y"),
             transaction.date.strftime("%H:%M:%S"),
-            transaction.posting_date.strftime("%d.%m.%Y")
-            if transaction.posting_date
-            else "",
             float(transaction.amount),
             transaction.category.value if transaction.category else "",
             transaction.description,
@@ -197,16 +193,33 @@ class Exporter:
         # Get or create worksheet
         try:
             worksheet = spreadsheet.worksheet(worksheet_name)
+            logger.info(f"Worksheet '{worksheet_name}' found")
         except Exception:
             worksheet = spreadsheet.add_worksheet(
                 title=worksheet_name, rows=1000, cols=len(EXPORT_COLUMNS)
             )
+            logger.info(f"Worksheet '{worksheet_name}' created")
 
         # Check if headers exist
         all_values = worksheet.get_all_values()
-        if not all_values:
-            worksheet.append_row(EXPORT_COLUMNS)
-            all_values = [EXPORT_COLUMNS]
+        has_correct_headers = (
+            len(all_values) > 0
+            and len(all_values[0]) >= len(EXPORT_COLUMNS)
+            and all_values[0][:len(EXPORT_COLUMNS)] == EXPORT_COLUMNS
+        )
+
+        if not has_correct_headers:
+            if not all_values:
+                # Empty sheet - just add headers
+                worksheet.append_row(EXPORT_COLUMNS)
+                logger.info("Headers added to empty worksheet")
+            else:
+                # Sheet has data but no proper headers - insert at row 1
+                worksheet.insert_row(EXPORT_COLUMNS, index=1)
+                logger.info("Headers inserted at row 1 (existing data found without headers)")
+            all_values = worksheet.get_all_values()
+        else:
+            logger.info("Headers already present")
 
         # Find duplicates
         existing_rows = self._find_duplicates(worksheet, transactions)
@@ -228,5 +241,9 @@ class Exporter:
         # Batch append new rows
         if rows_to_add:
             worksheet.append_rows(rows_to_add)
+            logger.info(f"Appended {len(rows_to_add)} rows to worksheet")
+        else:
+            logger.info("No new rows to append (all duplicates)")
 
+        logger.info(f"Export complete: added={len(rows_to_add)}, skipped={skipped}")
         return len(rows_to_add), skipped
