@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import quopri
+import email
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -46,106 +47,94 @@ class GmailEnricher:
             logger.error(f"Failed to initialize Gmail service: {e}")
             return None
 
-    def _get_html_content(self, payload, service, msg_id) -> List[str]:
-        """Recursively extract all HTML parts from a message payload, including attachments."""
-        htmls = []
-        mime_type = payload.get("mimeType")
+    def _get_html_from_eml(self, eml_bytes: bytes) -> str:
+        """Parse EML and extract HTML part."""
+        try:
+            msg = email.message_from_bytes(eml_bytes)
+            for part in msg.walk():
+                if part.get_content_type() == "text/html":
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        return payload.decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        return ""
 
-        # Case 1: text/html part
-        if mime_type == "text/html":
-            data = payload.get("body", {}).get("data")
-            if data:
-                htmls.append(base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore"))
-
-        # Case 2: message/rfc822 attachment (the forwarded emails)
-        if mime_type == "message/rfc822":
-            aid = payload.get("body", {}).get("attachmentId")
-            if aid and service:
-                try:
-                    att = service.users().messages().attachments().get(
-                        userId="me", messageId=msg_id, id=aid
-                    ).execute()
-                    data = att.get("data")
-                    if data:
-                        raw = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
-                        # Decode Quoted-Printable if it looks like it
-                        if "=3D" in raw or "=\r\n" in raw:
-                            try:
-                                raw = quopri.decodestring(raw.encode("ascii", errors="ignore")).decode("utf-8", errors="ignore")
-                            except Exception:
-                                pass
-                        htmls.append(raw)
-                except Exception as e:
-                    logger.debug(f"Could not fetch attachment: {e}")
-
-        # Recurse into parts
-        if "parts" in payload:
-            for part in payload["parts"]:
-                htmls.extend(self._get_html_content(part, service, msg_id))
-
-        return htmls
-
-    def _extract_items_from_html(self, html: str) -> List[str]:
+    def _extract_items(self, html: str) -> List[str]:
         """Extract item names from Ozon order email HTML."""
-        # Find item names followed by prices with RUB symbol or '=' (encoded)
-        # Ozon emails are complex, so we use a loose but filtered match
-        # items = re.findall(r">([^<]{10,200})<.*?(\d+[\s\d]*[.,]\d{2})\s*[₽=]", html, re.S)
+        # 1. Product links usually have names as text
+        links = re.findall(r'<a[^>]*?href=\"https?://(?:www\.)?ozon\.ru/product/[^>]*?>\s*([^<]{10,250})\s*</a>', html, re.S)
+        names = [re.sub(r'\s+', ' ', n).strip() for n in links]
         
-        # New approach: search for the receipt link first to identify order detail blocks
-        # but since we process HTML parts individually, let's look for order number
-        order_match = re.search(r"(\d{8}-\d{4})", html)
-        if not order_match:
-            return []
-            
-        # Subject extraction as fallback
-        subj_match = re.search(r"Subject:\s*=\?UTF-8\?Q\?([^\?]+)\?", html)
-        if subj_match:
-            try:
-                subj = quopri.decodestring(subj_match.group(1).replace("_", " ")).decode("utf-8", errors="ignore")
-                return [subj]
-            except:
-                pass
+        # 2. Spans with typical item styling
+        if not names:
+            spans = re.findall(r'<span[^>]*?>\s*([^<]{15,250})\s*</span>', html, re.S)
+            for s in spans:
+                clean = re.sub(r'\s+', ' ', s).strip()
+                # Ozon item names are usually descriptive and don't contain these words
+                # Filter out addresses, service messages, etc.
+                if len(clean) > 15 and not any(x in clean.lower() for x in [
+                    'итого', 'скидка', 'стоимость', 'баллы', 'здравствуйте', 'ozon', 
+                    'чека', 'заказ', 'команда', 'озон', 'лимита', 'карту', 'счёте', 
+                    'бесплатно', 'вашей', 'способом', 'платеж', 'на карту', 'пункте', 
+                    'доставки', 'перейти', 'отследить', 'подробнее', 'подарок',
+                    'улица', 'корпус', 'санкт-петербург', 'москва', 'дом', 'квартира'
+                ]):
+                    names.append(clean)
         
-        # If we can't find item list, return a generic descriptive label
-        if "Вернули деньги" in html:
-            return ["Возврат средств"]
-        if "Заказ принят" in html:
-            return ["Новый заказ"]
-        if "Ваш чек" in html:
-            return ["Электронный чек"]
-            
-        return []
+        return list(dict.fromkeys(names))
 
-    def fetch_ozon_orders(self, limit: int = 20) -> Dict[str, str]:
-        """Fetch recent Ozon order details from Gmail."""
+    def fetch_ozon_orders(self, limit: int = 5) -> Dict[str, str]:
+        """Fetch Ozon order details from Gmail."""
         service = self._get_service()
         if not service:
             return {}
 
         order_map = {}
         try:
-            # Search for Ozon emails
-            query = 'Subject:Ozon'
-            results = service.users().messages().list(userId="me", q=query, maxResults=limit).execute()
+            # Query for Ozon-related emails
+            results = service.users().messages().list(userId="me", q="Subject:Ozon", maxResults=limit).execute()
             messages = results.get("messages", [])
 
             for msg_info in messages:
                 m_id = msg_info["id"]
-                msg = service.users().messages().get(userId="me", id=m_id).execute()
-                htmls = self._get_html_content(msg["payload"], service, m_id)
+                msg_data = service.users().messages().get(userId="me", id=m_id).execute()
                 
-                for html in htmls:
-                    # Find order numbers in HTML
-                    orders = re.findall(r"(\d{8}-\d{4})", html)
-                    if not orders:
-                        continue
-                        
-                    items = self._extract_items_from_html(html)
-                    if items:
-                        details = ", ".join(items[:3])
-                        for order_no in set(orders):
-                            if order_no not in order_map or "чек" in details.lower():
-                                order_map[order_no] = details
+                # Walk through all parts to find EML attachments or HTML bodies
+                def process_payload(payload):
+                    if payload.get("mimeType") == "message/rfc822":
+                        aid = payload.get("body", {}).get("attachmentId")
+                        if aid:
+                            att = service.users().messages().attachments().get(
+                                userId="me", messageId=m_id, id=aid
+                            ).execute()
+                            eml_data = base64.urlsafe_b64decode(att["data"])
+                            
+                            # filename often contains status
+                            filename = payload.get("filename", "")
+                            
+                            html = self._get_html_from_eml(eml_data)
+                            if html:
+                                order_match = re.search(r"(\d{8}-\d{4})", html)
+                                if order_match:
+                                    order_no = order_match.group(1)
+                                    items = self._extract_items(html)
+                                    
+                                    if items:
+                                        details = ", ".join(items[:3])
+                                    else:
+                                        # Use filename if it's informative
+                                        details = filename.replace(".eml", "").strip() if filename else "Заказ Ozon"
+                                        
+                                    # Prioritize detailed names over generic ones
+                                    if order_no not in order_map or len(details) > len(order_map[order_no]):
+                                        order_map[order_no] = details
+                    
+                    if "parts" in payload:
+                        for part in payload["parts"]:
+                            process_payload(part)
+
+                process_payload(msg_data["payload"])
                                 
         except Exception as e:
             logger.error(f"Error fetching Ozon orders from Gmail: {e}")
