@@ -13,6 +13,7 @@ from expense_tracker.models import Category
 from expense_tracker.parsers import get_parser_for_file
 from expense_tracker.reports import ReportGenerator
 from expense_tracker.storage import Storage
+from expense_tracker.gmail_enricher import GmailEnricher
 
 app = typer.Typer(
     name="expense-tracker",
@@ -404,6 +405,56 @@ def run_bot() -> None:
 
     console.print("[cyan]Запуск Telegram бота...[/cyan]")
     bot_main()
+
+
+@app.command("enrich")
+def enrich_transactions(
+    limit: Annotated[
+        int,
+        typer.Option(
+            "--limit", "-n",
+            help="Maximum number of Gmail messages to scan",
+        ),
+    ] = 20,
+) -> None:
+    """Enrich Ozon transactions with details from Gmail."""
+    console.print("[cyan]Запуск обогащения данных из Gmail...[/cyan]")
+    
+    enricher = GmailEnricher()
+    order_map = enricher.fetch_ozon_orders(limit=limit)
+    
+    if not order_map:
+        console.print("[yellow]Детали заказов не найдены в Gmail[/yellow]")
+        return
+
+    console.print(f"[green]Найдено деталей для {len(order_map)} заказов[/green]")
+    
+    storage = get_storage()
+    # Manual update loop for now
+    import re
+    import sqlite3
+    
+    db_path = Path.home() / ".expense-tracker" / "expenses.db"
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    total_updated = 0
+    for order_no, details in order_map.items():
+        new_desc = f"Ozon: {details} ({order_no})"
+        # Update only Ozon transactions that don't have details yet
+        cursor.execute(
+            "UPDATE transactions SET description = ? WHERE description LIKE ? AND description NOT LIKE 'Ozon:%'",
+            (new_desc, f"%{order_no}%")
+        )
+        total_updated += cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    if total_updated > 0:
+        console.print(f"[green]Успешно обновлено транзакций: {total_updated}[/green]")
+    else:
+        console.print("[yellow]Нет новых транзакций для обновления[/yellow]")
 
 
 if __name__ == "__main__":
