@@ -85,7 +85,9 @@ class GmailEnricher:
         return list(dict.fromkeys(names))
 
     def fetch_ozon_orders(self, limit: int = 5) -> Dict[str, str]:
-        """Fetch Ozon order details from Gmail."""
+        """[LEGACY] Fetch Ozon order details from Gmail.
+        This approach is deprecated. Future implementation will use direct PDF processing.
+        """
         service = self._get_service()
         if not service:
             return {}
